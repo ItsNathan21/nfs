@@ -1,1 +1,33 @@
-this is a readme file !!!! real and truth
+NFS Heirarchy (I spelt it wrong) 
+Very RAFT inspired pls read the RAFT paper :3
+Kinda uses RAFT as a guideline to sync file metadata across all server machines. 
+However, each machine may store different actual data, all servers need to know about 
+which servers contain which files, so in the case of failure of a server, they can be recovered, 
+and also if someone wants to read the file or get contents they can actually do that :3
+
+
+SERVERS:
+    These are the file servers constantly working in the background. They recevie requests from users 
+    to store new files. Below is the server heirarchy
+
+    Leader : 
+        Main leader server. When other servers boot up, they must inform the leader about their presence, 
+        then the leader can let everyone else know about the new server. 
+    Follower: 
+        Follower servers. These are like followers from raft, where if they funnel metadata about all requests
+        to leaders. They gather metadata from files requested by users to add, send it to the leader, who 
+        then will make the decision on whom should actually store the file (possibly multiple, idk yet).
+
+
+Process for storing a new file:
+    Follower receives a request to add a new file from a client machine, client will send metadata of 
+    the file like size, date modified (for conflicts), and more (idk yet), to the receiver. The receiver 
+    forwards this to the leader (transparent to client, they don't know the leader or the existence of any leader),
+    Leader looks at the metadatam, analyzes the numbers brrrr and decides which follower to send the file to. 
+    The follower(s) will create a connection with the client, and the clients file sends on away. 
+
+    In the background, each follower must know about this new file addition, so the leader sends this file metadata
+    to everyone, and they run RAFT algo in the background in order to sync this file metadata across all nodes, 
+    so they have a consistent metadata for all the files.
+
+
