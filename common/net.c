@@ -165,21 +165,21 @@ struct msg *recv_msg(int fd)
     if (read_all(fd, &net_len, sizeof(net_len)) < 0)
     {
         log_print("Error reading message length");
-        exit(1);
+        return NULL;
     }
 
     uint32_t len = ntohl(net_len);
     if (len > MSG_BUF)
     {
         log_print("Message too big");
-        exit(1);
+        return NULL;
     }
 
     char buf[MSG_BUF];
     if (read_all(fd, buf, len) < 0)
     {
         log_print("Error reading message body");
-        exit(1);
+        return NULL;
     }
 
     struct msg *msg = xmalloc(sizeof(struct msg));

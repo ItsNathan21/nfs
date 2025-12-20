@@ -29,14 +29,15 @@ struct connected_server
 
 struct server
 {
-    uint32_t port;                      // the port this server is running on
-    char *addr;                         // our address we're running on
-    enum server_type_t type;            // our current type
-    int leader_fd;                      // the fd to contact the leader
-    char *leader_addr;                  // address of the leader (for connecting)
-    uint32_t leader_port;               // port of the leader (for connecting)
-    struct connected_server *followers; // array of all followers
-    pthread_mutex_t mux;                // mux for locking shared information of this struct
+    uint32_t port;                       // the port this server is running on
+    char *addr;                          // our address we're running on
+    enum server_type_t type;             // our current type
+    int leader_fd;                       // the fd to contact the leader
+    char *leader_addr;                   // address of the leader (for connecting)
+    uint32_t leader_port;                // port of the leader (for connecting)
+    struct connected_server **followers; // array of all followers
+    uint32_t followers_len;
+    pthread_mutex_t mux; // mux for locking shared information of this struct
 };
 
 enum msg_type

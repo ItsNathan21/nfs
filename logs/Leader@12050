@@ -1,4 +1,5 @@
-server@12050>Got a message with 0, 127.0.0.1:12051
-server@12050>Got a message with 0, 127.0.0.1:12051
-server@12050>Got a message with 0, 127.0.0.1:12051
-server@12050>Got a message with 0, 127.0.0.1:12051
+server@12050>New leader initialized, setting up sockets
+server@12050>Leader accepted new client. Creating new client thread
+server@12050>Leader routine received new message from client at 127.0.0.1:12051, handling
+server@12050>Leader got new PING, handling
+server@12050>Leader added new follower at 127.0.0.1:12051
