@@ -1,22 +1,29 @@
-#include "../server/server.h"'
+#ifndef NET
+#define NET
+
+#include "../server/server.h"
+/*
+    Starts a server listening on the nodes port using TCP.
+    Returns the fd associated with the listening process, or
+    -1 on failure
+*/
+int setup_listen(struct server *server);
 
 /*
-Maximum buffer needed for communicating between servers
+Connects to the servers leader address:port, and returns the
+fd associated with the connection, or -1 on error
 */
-#define COMM_BUF (1000)
-#define ADDR_LEN (25)
-/*
-    Binds a socket to leader_addr, returning that file
-    descriptor to communicate with the leader. Returns -1 on fail
-
-    Uses port specifified by port to connect to leader with
-*/
-int connect_to_leader(char *leader_addr, int port);
+int setup_connect(struct server *server);
 
 /*
-    Informs the leader about our nodes existence, so it can communicate with us.
-    The node struct should be fully initialized by this point
-
-    Returns -1 on fail, 0 on success
+    Send a message to the server denoted by fd
 */
-int inform_leader(node_t *node);
+void send_msg(struct msg *msg, int fd);
+
+/*
+    Receives a message from fd. Will block
+    until one comes
+*/
+struct msg *recv_msg(int fd);
+
+#endif
