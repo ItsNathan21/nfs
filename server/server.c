@@ -2,6 +2,7 @@
 #include "../logging/logger.h"
 #include "../common/net.h"
 #include "../common/alloc.h"
+#include "llist.h"
 #include <stdlib.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -11,32 +12,53 @@
 #include <string.h>
 #include <errno.h>
 #include <pthread.h>
+#include <signal.h>
+#include <time.h>
 
 struct leader_arg
 {
-    struct server *server;
     int connfd;
 };
 
 struct follower_arg
 {
-    struct server *server;
 };
 
-static struct server *new_server(enum server_type_t type, uint32_t port, char *leader_addr, uint32_t leader_port)
+static timer_t timeout_timer;
+static const struct itimerspec leader_alarm = {
+    .it_value = {
+        .tv_sec = 1L,
+        .tv_nsec = 0L,
+    },
+    .it_interval = {
+        .tv_sec = 0L,
+        .tv_nsec = 0L,
+    }};
+
+static const struct itimerspec follower_alarm = {
+    .it_value = {
+        .tv_sec = 0L,
+        .tv_nsec = 750000000L,
+    },
+    .it_interval = {
+        .tv_sec = 0L,
+        .tv_nsec = 0L,
+    }};
+
+static struct server *server;
+
+static void new_server(enum server_type_t type, uint32_t port, char *leader_addr, uint32_t leader_port)
 {
-    struct server *server = xmalloc(sizeof(struct server));
+    server = xmalloc(sizeof(struct server));
     server->leader_addr = xmalloc(sizeof(char) * INET_ADDRSTRLEN);
     server->addr = xmalloc(sizeof(char) * INET_ADDRSTRLEN);
-    server->followers = xmalloc(sizeof(struct connected_server *) * MAX_FOLLOWERS);
+    server->followers = new_dll();
     pthread_mutex_init(&server->mux, NULL);
-
-    memset(server->followers, 0, sizeof(struct connected_server *) * MAX_FOLLOWERS);
 
     server->port = port;
     server->type = type;
     server->leader_port = leader_port;
-    server->followers_len = 0U;
+    server->timer_initialized = 0;
 
     if (leader_addr != NULL)
     {
@@ -44,8 +66,6 @@ static struct server *new_server(enum server_type_t type, uint32_t port, char *l
     }
 
     strcpy(server->addr, "127.0.0.1");
-
-    return server;
 }
 
 static void free_msg(struct msg *msg)
@@ -53,7 +73,7 @@ static void free_msg(struct msg *msg)
     free(msg);
 }
 
-static void free_server(struct server *server)
+static void free_server()
 {
     free(server->addr);
     free(server->leader_addr);
@@ -64,7 +84,15 @@ static void free_server(struct server *server)
     free(server);
 }
 
-static struct msg *new_ping(struct server *server)
+static enum server_type_t get_server_state()
+{
+    pthread_mutex_lock(&server->mux);
+    enum server_type_t state = server->type;
+    pthread_mutex_unlock(&server->mux);
+    return state;
+}
+
+static struct msg *new_ping()
 {
     struct msg *msg = xmalloc(sizeof(struct msg));
     msg->type = PING;
@@ -74,21 +102,124 @@ static struct msg *new_ping(struct server *server)
     return msg;
 }
 
-static void ping_leader(struct server *server)
+static void ping_leader()
 {
     struct msg *msg = new_ping(server);
     send_msg(msg, server->leader_fd);
     free_msg(msg);
 }
 
-static void handle_msg(struct server *server, int connfd, struct msg *msg)
+static void check_idle_followers()
+{
+    pthread_mutex_lock(&server->mux);
+    for (struct node *node = server->followers->head; node != NULL;)
+    {
+        struct connected_server *follower = (struct connected_server *)node->data;
+        if (!follower->received_ping_in_period)
+        {
+            struct node *next = node->next;
+            remove_dll(server->followers, node);
+            node = next;
+        }
+        else
+        {
+            follower->received_ping_in_period = 0;
+            node = node->next;
+        }
+    }
+    pthread_mutex_unlock(&server->mux);
+}
+
+static void timeout_handler(int signum, siginfo_t *info, void *context)
+{
+    switch (get_server_state())
+    {
+    case LEADER:
+    {
+        log_print("Leader got timeout, checking for inactive clients");
+        check_idle_followers();
+        print_dll(server->followers);
+        timer_settime(timeout_timer, 0, &leader_alarm, NULL);
+        return;
+    }
+    case FOLLOWER:
+    {
+        log_print("Follower got timeout, sending leader a ping");
+        ping_leader();
+        timer_settime(timeout_timer, 0, &follower_alarm, NULL);
+        return;
+    }
+    case CANDIDATE:
+    {
+        log_print("Candidate got timeout, idk what the fuck to do yet");
+        return;
+    }
+    }
+}
+
+//! server->mux is already locked when entering here
+static void init_timeout(const struct itimerspec *alarm_spec)
+{
+    struct sigaction sigact;
+    sigemptyset(&sigact.sa_mask);
+    sigact.sa_sigaction = timeout_handler;
+    sigact.sa_flags = SA_SIGINFO;
+
+    sigaction(SIGRTMIN + 0, &sigact, NULL);
+
+    struct sigevent sigevt;
+    sigevt.sigev_notify = SIGEV_SIGNAL;
+    sigevt.sigev_signo = SIGRTMIN + 0;
+    sigevt.sigev_value.sival_ptr = NULL;
+
+    if (timer_create(CLOCK_REALTIME, &sigevt, &timeout_timer))
+        return;
+
+    if (timer_settime(timeout_timer, 0, alarm_spec, NULL))
+        return;
+
+    server->timer_initialized = 1;
+}
+
+/*
+    Returns the follower associated with ping if known, or
+    NULL otherwise
+*/
+static struct connected_server *follower_already_known(struct msg *msg)
+{
+    if (server->followers->len <= 0)
+    {
+        return NULL;
+    }
+    for (struct node *node = server->followers->head; node != NULL; node = node->next)
+    {
+        struct connected_server *follower = (struct connected_server *)node->data;
+        if ((follower->port == msg->sender_port) &&
+            (!strcmp(follower->addr, msg->sender_addr)))
+        {
+            return follower;
+        }
+    }
+    return NULL;
+}
+
+static void handle_msg(int connfd, struct msg *msg)
 {
     switch (msg->type)
     {
     case PING:
     {
         log_print("Leader got new PING, handling");
-        if (server->followers_len >= MAX_FOLLOWERS)
+        struct connected_server *found_follower;
+        pthread_mutex_lock(&server->mux);
+        if ((found_follower = follower_already_known(msg)) != NULL)
+        {
+            found_follower->received_ping_in_period = 1;
+            pthread_mutex_unlock(&server->mux);
+            return;
+        }
+        pthread_mutex_unlock(&server->mux);
+        if (server->followers->len >= MAX_FOLLOWERS)
         {
             log_print("Leader can't handle another follower, ignoring");
             return;
@@ -97,7 +228,10 @@ static void handle_msg(struct server *server, int connfd, struct msg *msg)
         follower->fd = connfd;
         follower->port = msg->sender_port;
         follower->addr = msg->sender_addr;
-        server->followers[server->followers_len++] = follower;
+        follower->received_ping_in_period = 0;
+        pthread_mutex_lock(&server->mux);
+        add_dll(server->followers, (void *)follower);
+        pthread_mutex_unlock(&server->mux);
         log_print("Leader added new follower at %s:%d", follower->addr, follower->port);
         return;
     }
@@ -119,7 +253,6 @@ void *leader_routine(void *arg)
         return NULL;
     }
     int connfd = arg_pack->connfd;
-    struct server *server = arg_pack->server;
     while (1)
     {
         struct msg *msg = recv_msg(connfd);
@@ -128,7 +261,7 @@ void *leader_routine(void *arg)
             return NULL;
         }
         log_print("Leader routine received new message from client at %s:%d, handling", msg->sender_addr, msg->sender_port);
-        handle_msg(server, connfd, msg);
+        handle_msg(connfd, msg);
         free_msg(msg);
     }
 
@@ -138,14 +271,9 @@ void *leader_routine(void *arg)
 
 void follower_routine(struct follower_arg *arg)
 {
-    if (arg == NULL)
-    {
-        log_print("Follower routine received NULL argument, aborting thread");
-        return;
-    }
     log_print("Follower thread created, sending ping");
-    struct server *server = arg->server;
-    ping_leader(server);
+    init_timeout(&follower_alarm);
+    ping_leader();
     while (1)
     {
     }
@@ -153,7 +281,7 @@ void follower_routine(struct follower_arg *arg)
 
 void server_main(enum server_type_t type, uint32_t port, char *leader_addr, uint32_t leader_port)
 {
-    struct server *server = new_server(type, port, leader_addr, leader_port);
+    new_server(type, port, leader_addr, leader_port);
 
     switch (type)
     {
@@ -168,14 +296,25 @@ void server_main(enum server_type_t type, uint32_t port, char *leader_addr, uint
             int connfd;
             if ((connfd = accept(accept_fd, (struct sockaddr *)&sockaddr, &socklen)) < 0)
             {
-                log_print("Accept fail");
+                if (errno == EINTR)
+                    continue;
+                else
+                {
+                    log_print("Accept fail");
+                    return;
+                }
             }
             log_print("Leader accepted new client. Creating new client thread");
             pthread_t thread;
             struct leader_arg *arg = xmalloc(sizeof(struct leader_arg));
             arg->connfd = connfd;
-            arg->server = server;
             pthread_create(&thread, NULL, leader_routine, (void *)arg);
+            pthread_mutex_lock(&server->mux);
+            if (!server->timer_initialized)
+            {
+                init_timeout(&leader_alarm);
+            }
+            pthread_mutex_unlock(&server->mux);
         }
         break;
     }
@@ -189,7 +328,6 @@ void server_main(enum server_type_t type, uint32_t port, char *leader_addr, uint
         }
         server->leader_fd = connfd;
         struct follower_arg *arg = xmalloc(sizeof(struct follower_arg));
-        arg->server = server;
         follower_routine(arg);
         break;
     }

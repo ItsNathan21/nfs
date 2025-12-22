@@ -1,2 +1,18 @@
 server@12051>New follower initialized, settup up connection to leader
 server@12051>Follower thread created, sending ping
+server@12051>Follower got timeout, sending leader a ping
+server@12051>Follower got timeout, sending leader a ping
+server@12051>Follower got timeout, sending leader a ping
+server@12051>Follower got timeout, sending leader a ping
+server@12051>Follower got timeout, sending leader a ping
+server@12051>Follower got timeout, sending leader a ping
+server@12051>Follower got timeout, sending leader a ping
+server@12051>Follower got timeout, sending leader a ping
+server@12051>Follower got timeout, sending leader a ping
+server@12051>Follower got timeout, sending leader a ping
+server@12051>Follower got timeout, sending leader a ping
+server@12051>Follower got timeout, sending leader a ping
+server@12051>Follower got timeout, sending leader a ping
+server@12051>Follower got timeout, sending leader a ping
+server@12051>Follower got timeout, sending leader a ping
+server@12051>Follower got timeout, sending leader a ping

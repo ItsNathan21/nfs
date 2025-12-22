@@ -3,6 +3,7 @@
 
 #include <inttypes.h>
 #include <pthread.h>
+#include "llist.h"
 
 /*
     Current type that this file server is acting as
@@ -22,27 +23,29 @@ struct connected_server
 {
     uint32_t port; // port and addr are what they sound like
     uint8_t *addr;
-    int fd; // fd to read/write from each follower
+    int fd;                      // fd to read/write from each follower
+    int received_ping_in_period; // have we heard from this follower during this timeout cycle?
 };
 
 #define MAX_FOLLOWERS (10)
 
 struct server
 {
-    uint32_t port;                       // the port this server is running on
-    char *addr;                          // our address we're running on
-    enum server_type_t type;             // our current type
-    int leader_fd;                       // the fd to contact the leader
-    char *leader_addr;                   // address of the leader (for connecting)
-    uint32_t leader_port;                // port of the leader (for connecting)
-    struct connected_server **followers; // array of all followers
-    uint32_t followers_len;
-    pthread_mutex_t mux; // mux for locking shared information of this struct
+    uint32_t port;           // the port this server is running on
+    char *addr;              // our address we're running on
+    enum server_type_t type; // our current type
+    int leader_fd;           // the fd to contact the leader
+    char *leader_addr;       // address of the leader (for connecting)
+    uint32_t leader_port;    // port of the leader (for connecting)
+    struct dll *followers;   // array of all followers
+    pthread_mutex_t mux;     // mux for locking shared information of this struct
+    int timer_initialized;
 };
 
 enum msg_type
 {
     PING = 0,
+
 };
 
 struct msg
